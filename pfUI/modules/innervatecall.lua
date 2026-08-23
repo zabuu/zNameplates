@@ -1,0 +1,95 @@
+-- Innervate Callout Module
+-- Announces Innervate casts via raid/party/battleground chat
+-- Registers AURA_CAST events directly - zero polling, pure event-driven
+
+pfUI:RegisterModule("innervatecall", function ()
+  -- Requires Nampower for AURA_CAST events
+  if not GetNampowerVersion then return end
+
+  -- Only load for druids
+  if UnitClassBase("player") ~= "DRUID" then return end
+
+  local INNERVATE_SPELLID = 29166
+
+  -- GUID → name resolution for the target. UnitTokenFromGUID walks the
+  -- engine's known unit tokens (player, party, raid, target, ...) and
+  -- returns the first one currently bound to the GUID, so we don't have
+  -- to manually iterate party/raid here.
+  local function ResolveTargetName(targetGuid)
+    if not targetGuid then return nil end
+    local token = UnitTokenFromGUID(targetGuid)
+    return token and UnitName(token) or nil
+  end
+
+  -- Determine chat channel based on group context
+  local function GetAnnounceChannel()
+    local _, instanceType = IsInInstance()
+    if instanceType == "pvp" then
+      return "BATTLEGROUND"
+    end
+
+    if IsInRaid() then
+      return "RAID"
+    end
+
+    if IsInGroup() then
+      return "PARTY"
+    end
+
+    return nil
+  end
+
+  -- Event frame - registers AURA_CAST directly (bypasses libdebuff hooks
+  -- which are gated behind ownDebuffs/pendingCasts checks meant for debuffs)
+  local frame = CreateFrame("Frame")
+  -- AURA_CAST_ON_SELF fires when a buff lands ON the player
+  -- AURA_CAST_ON_OTHER fires when a buff lands on someone else
+  -- Both needed: self-innervate = ON_SELF, innervate on others = ON_OTHER
+  -- casterGuid check prevents announcing other druids' innervates
+  frame:RegisterEvent("AURA_CAST_ON_SELF")
+  frame:RegisterEvent("AURA_CAST_ON_OTHER")
+  frame:RegisterEvent("PLAYER_LOGOUT")
+  frame:SetScript("OnEvent", function()
+    if event == "PLAYER_LOGOUT" then
+      this:UnregisterAllEvents()
+      this:SetScript("OnEvent", nil)
+      return
+    end
+
+    -- AURA_CAST args: arg1=spellId, arg2=casterGuid, arg3=targetGuid
+    local spellId = arg1
+    local casterGuid = arg2
+    local targetGuid = arg3
+
+    if spellId ~= INNERVATE_SPELLID then return end
+
+    -- Only announce our own casts
+    if not IsPlayerGuid(casterGuid) then return end
+
+    -- Resolve target name from GUID
+    local targetName = ResolveTargetName(targetGuid) or "Unknown"
+
+    -- Determine channel
+    local channel = GetAnnounceChannel()
+    if not channel then return end -- solo, no announcement
+
+    SendChatMessage(">> Innervate casted on " .. targetName .. " <<", channel)
+
+    -- Schedule "ready" announcement when the cooldown expires. Read the
+    -- precise remaining time from C_Spell.GetSpellCooldown (startTime and
+    -- duration are seconds from the GetTime epoch); fall back to 360s.
+    local cdRemaining = 360
+    local cd = C_Spell.GetSpellCooldown(INNERVATE_SPELLID)
+    if cd and cd.duration and cd.duration > 0 then
+      local remaining = cd.startTime + cd.duration - GetTime()
+      if remaining > 0 then cdRemaining = remaining end
+    end
+
+    C_Timer.After(cdRemaining, function()
+      local ch = GetAnnounceChannel()
+      if ch then
+        SendChatMessage(">> Innervate is ready <<", ch)
+      end
+    end)
+  end)
+end)

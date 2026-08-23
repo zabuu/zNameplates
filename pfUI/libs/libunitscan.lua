@@ -1,0 +1,201 @@
+-- load pfUI environment
+setfenv(1, pfUI:GetEnvironment())
+
+--[[ libunitscan ]]--
+-- A pfUI library that detects and saves all kind of unit related informations.
+-- Such as level, class, elite-state and playertype. Each query causes the library
+-- to automatically scan for the target if not already existing. Player-data is
+-- persisted within the pfUI_playerDB where the mob data is a throw-away table.
+-- The automatic target scanner is only working for vanilla due to client limitations
+-- on further expansions.
+--
+-- External functions:
+--   GetUnitInfo(name, active, isPlayer)
+--     Returns information of the given unitname. Returns nil if no match is found.
+--     When nothing is found and the active flag is set, the autoscanner will
+--     automatically pick it up and try to fill the missing entry by targetting the unit.
+--     Pass isPlayer=true/false to restrict the lookup to the players or mobs table
+--     (avoids name-collision false positives, e.g. a player and an NPC named Chromie).
+--
+--     class[String] - The class of the unit
+--     level[Number] - The level of the unit
+--     elite[String] - The elite state of the unit (See UnitClassification())
+--     player[Boolean] - Returns true if unit is a player
+--     guild[String] - Returns guild name of unit is a player
+--
+-- Internal functions:
+--   libunitscan:AddData(db, name, class, level, elite)
+--     Adds unit data to a given db. Where db should be either "players" or "mobs"
+--
+
+-- return instantly when another libunitscan is already active
+if pfUI.api.libunitscan then return end
+
+local units = { players = {}, mobs = {} }
+local queue = { }
+
+-- Feed (guid, name, classToken) into ClassicAPI's persistent name
+-- cache when the unit's GUID is resolvable. Roster-style packets
+-- (party / raid / inspect on glance) carry class inline, so the
+-- engine often doesn't issue a separate name query and the DLL's
+-- NameCache hook never fires for them — this is where we close that gap.
+local function RememberByUnit(unit, name, class)
+  if not (name and class) then return end
+  local guid = UnitGUID(unit)
+  if not guid then return end
+  C_PlayerCache.RememberPlayer(guid, name, class, UnitRace(unit), UnitSex(unit))
+end
+
+function GetUnitInfo(name, active, isPlayer)
+  if isPlayer ~= false and units["players"][name] then
+    local ret = units["players"][name]
+    return ret.class, ret.level, ret.elite, true, ret.guild
+  elseif isPlayer ~= true and units["mobs"][name] then
+    local ret = units["mobs"][name]
+    return ret.class, ret.level, ret.elite, nil, ret.guild
+  elseif active then
+    queue[name] = true
+    libunitscan:Show()
+  end
+end
+
+local function AddData(db, name, class, level, elite, guild)
+  if not name or not db then return end
+  units[db] = units[db] or {}
+  units[db][name] = units[db][name] or {}
+  units[db][name].class = class or units[db][name].class
+  units[db][name].level = level or units[db][name].level
+  units[db][name].elite = elite or units[db][name].elite
+  units[db][name].guild = guild or units[db][name].guild
+  queue[name] = nil
+end
+
+local libunitscan = CreateFrame("Frame", "pfUnitScan", UIParent)
+libunitscan:RegisterEvent("PLAYER_ENTERING_WORLD")
+libunitscan:RegisterEvent("FRIENDLIST_UPDATE")
+libunitscan:RegisterEvent("GUILD_ROSTER_UPDATE")
+libunitscan:RegisterEvent("RAID_ROSTER_UPDATE")
+libunitscan:RegisterEvent("PARTY_MEMBERS_CHANGED")
+libunitscan:RegisterEvent("PLAYER_TARGET_CHANGED")
+libunitscan:RegisterEvent("WHO_LIST_UPDATE")
+libunitscan:RegisterEvent("CHAT_MSG_SYSTEM")
+libunitscan:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+libunitscan:RegisterEvent("NAME_PLATE_UNIT_ADDED")
+libunitscan:SetScript("OnEvent", function()
+  if event == "PLAYER_ENTERING_WORLD" then
+
+    -- load pfUI_playerDB
+    units.players = pfUI_playerDB
+
+    -- update own character details
+    local name = UnitName("player")
+    local class = UnitClassBase("player")
+    local level = UnitLevel("player")
+    local guild = GetGuildInfo("player")
+    AddData("players", name, class, level, nil, guild)
+    RememberByUnit("player", name, class)
+
+  elseif event == "FRIENDLIST_UPDATE" then
+    for i = 1, GetNumFriends() do
+      local info = C_FriendList.GetFriendInfoByIndex(i)
+      if info then
+        local level = info.level > 0 and info.level or nil
+        AddData("players", info.name, info.classFilename, level)
+      end
+    end
+
+  elseif event == "GUILD_ROSTER_UPDATE" then
+    local name, class, level, _, guild
+    for i = 1, GetNumGuildMembers() do
+      name, _, _, level, class = GetGuildRosterInfo(i)
+      guild = GetGuildInfo("player")
+      class = L["class"][class] or nil
+      AddData("players", name, class, level, nil, guild)
+    end
+
+  elseif event == "RAID_ROSTER_UPDATE" then
+    local name, class, SubGroup, level, unit, _
+    for i = 1, GetNumRaidMembers() do
+      unit = "raid" .. i
+      name, _, SubGroup, level, class = GetRaidRosterInfo(i)
+      class = L["class"][class] or nil
+      AddData("players", name, class, level)
+      RememberByUnit(unit, name, class)
+    end
+
+  elseif event == "PARTY_MEMBERS_CHANGED" then
+    local name, class, level, unit, _, guild
+    for i = 1, GetNumPartyMembers() do
+      unit = "party" .. i
+      class = UnitClassBase(unit)
+      name = UnitName(unit)
+      level = UnitLevel(unit)
+      guild = GetGuildInfo(unit)
+      AddData("players", name, class, level, nil, guild)
+      RememberByUnit(unit, name, class)
+    end
+
+  elseif event == "WHO_LIST_UPDATE" or event == "CHAT_MSG_SYSTEM" then
+    for i = 1, C_FriendList.GetNumWhoResults() do
+      local info = C_FriendList.GetWhoInfo(i)
+      if info then
+        AddData("players", info.fullName, info.filename, info.level, nil, info.fullGuildName)
+      end
+    end
+
+  elseif event == "UPDATE_MOUSEOVER_UNIT" or event == "PLAYER_TARGET_CHANGED" or event == "NAME_PLATE_UNIT_ADDED" then
+    local scan = event == "PLAYER_TARGET_CHANGED" and "target"
+              or event == "NAME_PLATE_UNIT_ADDED" and arg1
+              or "mouseover"
+    local name, class, level, elite, guild, _
+    if UnitExists(scan) then
+      if UnitIsPlayer(scan) then
+        class = UnitClassBase(scan)
+        level = UnitLevel(scan)
+        -- UnitLevel returns -1 for unknown levels, don't overwrite known values
+        level = level > 0 and level or nil
+        name = UnitName(scan)
+        guild = GetGuildInfo(scan)
+        AddData("players", name, class, level, nil, guild)
+        RememberByUnit(scan, name, class)
+      else
+        class = UnitClassBase(scan)
+        elite = UnitClassification(scan)
+        level = UnitLevel(scan)
+        -- UnitLevel returns -1 for unknown levels, don't overwrite known values
+        level = level > 0 and level or nil
+        name = UnitName(scan)
+        guild = UnitSubName(scan)
+        AddData("mobs", name, class, level, elite, guild)
+      end
+    end
+  end
+end)
+
+-- setup sound function switches
+local SoundOn = PlaySound
+local SoundOff = function() return end
+
+libunitscan:SetScript("OnUpdate", function()
+  -- don't scan when another unit is in target
+  if UnitExists("target") or UnitName("target") then return end
+
+  local name = next(queue)
+  if name then
+    -- disable sound
+    _G.PlaySound = SoundOff
+
+    -- try to target the unknown unit
+    TargetByName(name, true)
+    ClearTarget()
+
+    -- enable sound again
+    _G.PlaySound = SoundOn
+
+    queue[name] = nil
+  end
+
+  this:Hide()
+end)
+
+pfUI.api.libunitscan = libunitscan
