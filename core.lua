@@ -56,6 +56,7 @@ local defaults = {
     showhostile = "1", showfriendly = "0",
     disable_hostile_in_friendly = "0", disable_friendly_in_friendly = "0",
     use_unitfonts = "0", overlap_enemy = "0", overlap_friendly = "0",
+    overlap_friendly_area = "0", overlap_combat = "0",
     verticalhealth = "0", vertical_offset = "0",
     showcastbar = "1", targetcastbar = "0", spellname = "0",
     showdebuffs = "1", showdebuffs_hostile = "1", showdebuffs_friendly = "0",
@@ -74,6 +75,8 @@ local defaults = {
     combatcasting = ".7,.2,.7,1", combatofftanks = "",
     outfriendly = "0", outfriendlynpc = "1", outneutral = "1", outenemy = "1",
     targethighlight = "0", highlightcolor = "1,1,1,1",
+    enemynamecolor = "1,1,1,1", friendlynamecolor = ".2,1,.2,1",
+    critternamecolor = "1,1,1,.35",
     showhp = "0", hptextpos = "RIGHT", nametextpos = "CENTER",
     hptextformat = "curmaxs", width = "120", debuffsize = "14", debuffoffset = "4",
     heighthealth = "8", heightcast = "8", cpdisplay = "0",
@@ -119,8 +122,11 @@ end
 local function MigrateNameplateSettings(config)
   local nameplates = config and config.nameplates
   if type(nameplates) ~= "table" or nameplates.overlap == nil then return end
-  if nameplates.overlap_enemy == nil then nameplates.overlap_enemy = nameplates.overlap end
-  if nameplates.overlap_friendly == nil then nameplates.overlap_friendly = nameplates.overlap end
+  -- The legacy value is authoritative during this one-time migration. This
+  -- also handles databases that received the new default keys on an earlier
+  -- reload before migration was added.
+  nameplates.overlap_enemy = nameplates.overlap
+  nameplates.overlap_friendly = nameplates.overlap
   nameplates.overlap = nil
 end
 

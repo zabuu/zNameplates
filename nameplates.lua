@@ -38,6 +38,18 @@ function zNameplates.StartNameplates()
     ["ENEMY_PLAYER"] = { .9, .2, .3, .8 },
     ["FRIENDLY_PLAYER"] = { .2, .6, 1, .8 }
   }
+  -- Happiness colours used for the player's pet nameplate.
+  getfenv(1).PET_HAPPINESS_NAME_COLORS = {
+    [1] = { 1, .15, .15, 1 },
+    [2] = { 1, .85, .15, 1 },
+    [3] = { .2, 1, .2, 1 },
+  }
+  getfenv(1).REACTION_NAME_COLORS = {
+    [1] = { .8, .1, .1, 1 }, [2] = { .9, .2, .1, 1 },
+    [3] = { 1, .5, .1, 1 }, [4] = { 1, 1, .1, 1 },
+    [5] = { .2, 1, .2, 1 }, [6] = { .2, 1, .2, 1 },
+    [7] = { .2, 1, .2, 1 }, [8] = { .3, .7, 1, 1 },
+  }
 
   local offtanks = {}
 
@@ -62,6 +74,7 @@ function zNameplates.StartNameplates()
   local savedHostileState = nil
   local savedFriendlyState = nil
   local inFriendlyZone = false
+  local inFriendlyArea = false
   local myGuild = nil
   local platecount = 0
   local registry = {}
@@ -409,6 +422,8 @@ function zNameplates.StartNameplates()
     cfg.use_unitfonts = C.nameplates.use_unitfonts == "1"
     cfg.overlap_enemy = C.nameplates.overlap_enemy == "1"
     cfg.overlap_friendly = C.nameplates.overlap_friendly == "1"
+    cfg.overlap_friendly_area = C.nameplates.overlap_friendly_area == "1"
+    cfg.overlap_combat = C.nameplates.overlap_combat == "1"
     cfg.font_size = cfg.use_unitfonts and C.global.font_unit_size or C.global.font_size
     cfg.hptextformat = C.nameplates.hptextformat
     -- NEW: Cache debuff config
@@ -516,6 +531,24 @@ function zNameplates.StartNameplates()
     return color
   end
 
+  local function IsCombatWithPlayer(plate)
+    if not UnitAffectingCombat("player") then return nil end
+    local token = plate and plate.unit
+    if not token or not UnitExists(token) or UnitCanAssist("player", token) or not UnitAffectingCombat(token) then return nil end
+    local threat = UnitThreatSituation and UnitThreatSituation("player", token)
+    if threat and threat > 0 then return true end
+    local target = token .. "target"
+    return UnitGUID(target) and UnitIsUnit(target, "player") or nil
+  end
+
+  local function ShouldOverlap(plate)
+    local overlap = plate and plate.overlapEnabled
+    if overlap == nil then overlap = cfg.overlap_enemy end
+    if cfg.overlap_friendly_area and inFriendlyArea then overlap = true end
+    if IsCombatWithPlayer(plate) and (cfg.overlap_combat or (plate and plate.isNeutral)) then overlap = false end
+    return overlap
+  end
+
   local function DoNothing()
     return
   end
@@ -583,6 +616,10 @@ function zNameplates.StartNameplates()
     elseif C.nameplates.critters == "1" and CreatureType(plate) == 8 then
       return true
     elseif C.nameplates.totems == "1" and CreatureType(plate) == 11 then
+      return true
+    elseif unittype == "NEUTRAL_NPC" and not plate.neutralProvoked then
+      -- Neutral mobs behave like friendly units until they are provoked:
+      -- retain the nameplate name, but hide the healthbar while idle.
       return true
     end
 
@@ -822,11 +859,10 @@ nameplates:RegisterEvent("ADDON_LOADED")
       -- Handle friendly zone nameplate disable feature
       local disableHostile = C.nameplates["disable_hostile_in_friendly"] == "1"
       local disableFriendly = C.nameplates["disable_friendly_in_friendly"] == "1"
+      local nowFriendly = GetZonePVPInfo() == "friendly"
+      inFriendlyArea = nowFriendly
       
       if disableHostile or disableFriendly then
-        local pvpType = GetZonePVPInfo()
-        local nowFriendly = (pvpType == "friendly")
-        
         if nowFriendly and not inFriendlyZone then
           -- Entering friendly zone - save current state and hide based on options
           inFriendlyZone = true
@@ -883,6 +919,14 @@ nameplates:RegisterEvent("ADDON_LOADED")
         local guid = UnitGUID(arg1)
         plate.nameplate.cachedGuid = guid
         plate.nameplate.unit = arg1
+        -- A Blizzard nameplate is pooled. Clear all identity-dependent state
+        -- immediately on reassignment, even when the replacement unit has the
+        -- same displayed name as the previous occupant.
+        table.wipe(plate.nameplate.cache)
+        plate.nameplate.isFriendly = nil
+        plate.nameplate.isNeutral = nil
+        plate.nameplate.isCritter = nil
+        plate.nameplate.neutralProvoked = nil
         plate.nameplate.creatureType = nil  -- recompute for the new unit
         plate.nameplate.totemIcon = nil
         if guid then
@@ -1063,6 +1107,9 @@ nameplates:RegisterEvent("ADDON_LOADED")
       for k in pairs(threatMemory) do
         threatMemory[k] = nil
       end
+      for parent in pairs(visiblePlates) do
+        if parent.nameplate then parent.nameplate.neutralProvoked = nil end
+      end
     end
   end)
 
@@ -1128,6 +1175,12 @@ nameplates:RegisterEvent("ADDON_LOADED")
     nameplate.raidiconframe = CreateFrame("Frame", nil, nameplate)
     nameplate.raidiconframe:SetFrameLevel(10)
     nameplate.raidiconframe:SetAllPoints(nameplate)
+    -- Some client builds do not expose Blizzard's raid-icon region in the
+    -- nameplate region list. Create a compatible replacement so one missing
+    -- optional region cannot abort plate creation (and the overlap updater).
+    if not nameplate.raidicon then
+      nameplate.raidicon = nameplate:CreateTexture(nil, "OVERLAY")
+    end
     nameplate.raidicon:SetParent(nameplate.raidiconframe)
     nameplate.raidicon:SetDrawLayer("OVERLAY", 7)
     if C.unitframes.blizzard_raidicons ~= "1" then
@@ -1323,6 +1376,8 @@ nameplates:RegisterEvent("ADDON_LOADED")
     local hp = plate.original.healthbar:GetValue()
     local hpmin, hpmax = plate.original.healthbar:GetMinMaxValues()
     local name = plate.original.name:GetText()
+    local unitName = plate.unit and UnitName(plate.unit)
+    if unitName then name = unitName end
     local level = plate.original.level:IsShown() and plate.original.level:GetObjectType() == "FontString" and tonumber(plate.original.level:GetText()) or "??"
 
     -- reset per-unit cache when the plate is reassigned. Gate on GUID *and*
@@ -1344,7 +1399,10 @@ nameplates:RegisterEvent("ADDON_LOADED")
 
     local target = plate.istarget
     local mouseover = plate.cachedGuid and plate.cachedGuid == frameState.mouseoverGuid or nil
-    local unitstr = target and "target" or mouseover and "mouseover" or plate.cachedGuid or nil
+    -- Prefer the exact nameplate unit token. Target/mouseover are only fallback
+    -- probes; using them first can misclassify two simultaneously visible
+    -- units that happen to share a name.
+    local unitstr = plate.unit or target and "target" or mouseover and "mouseover" or plate.cachedGuid or nil
 
     -- resolve player vs npc from plate's own unit so libunitscan can't return
     -- a player record for an NPC sharing the same name (e.g. Chromie). Stored
@@ -1371,8 +1429,19 @@ nameplates:RegisterEvent("ADDON_LOADED")
 
     if player and unittype == "ENEMY_NPC" then unittype = "ENEMY_PLAYER" end
     if player and unittype == "FRIENDLY_NPC" then unittype = "FRIENDLY_PLAYER" end
+    plate.isCritter = CreatureType(plate) == 8
+    plate.isNeutral = unittype == "NEUTRAL_NPC"
+    if plate.isNeutral then
+      if IsCombatWithPlayer(plate) then
+        plate.neutralProvoked = true
+      elseif plate.neutralProvoked and plate.unit and not UnitAffectingCombat(plate.unit) then
+        plate.neutralProvoked = nil
+      end
+    else
+      plate.neutralProvoked = nil
+    end
     plate.isFriendly = unittype == "FRIENDLY_PLAYER" or unittype == "FRIENDLY_NPC"
-    if plate.isFriendly then
+    if plate.isFriendly or plate.isNeutral then
       plate.overlapEnabled = cfg.overlap_friendly
     else
       plate.overlapEnabled = cfg.overlap_enemy
@@ -1437,7 +1506,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
       plate.name:SetParent(plate)
       plate.guild:SetPoint("BOTTOM", plate.name, "BOTTOM", -2, -(font_size + 2))
 
-      plate.level:Show()
+      if plate.isCritter then plate.level:Hide() else plate.level:Show() end
       plate.name:Show()
       plate.health:Hide()
       if guild and C.nameplates.showguildname == "1" then
@@ -1451,7 +1520,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
       plate.name:SetParent(plate.health)
       plate.guild:SetPoint("BOTTOM", plate.health, "BOTTOM", 0, -(font_size + 4))
 
-      plate.level:Show()
+      if plate.isCritter then plate.level:Hide() else plate.level:Show() end
       plate.name:Show()
       plate.health:Show()
       plate.glow:SetPoint("CENTER", plate.health, "CENTER", 0, 0)
@@ -1571,33 +1640,42 @@ nameplates:RegisterEvent("ADDON_LOADED")
       plate.cache.r, plate.cache.g, plate.cache.b = r, g, b
     end
 
-    -- Friendly player names take this colour when friendclassnamec is on.
-    -- Ownership is recorded so the OnUpdate sync below stands down rather than
-    -- racing us: both writers used to share cache.namecolor despite storing
-    -- unrelated quantities (this colour vs Blizzard's name FontString), so
-    -- either could suppress the other -- and since nameplate.cache survives
-    -- pool reuse, a recycled plate could keep the previous unit's name colour.
-    local ownname = unittype == "FRIENDLY_PLAYER" and C.nameplates["friendclassnamec"] == "1"
-      and class and true or nil
-
-    if plate.cache.ownname ~= ownname then
-      plate.cache.ownname = ownname
-      -- ownership flipped: whichever writer is now in charge must re-assert
-      plate.cache.namecolor = nil
-      plate.cache.ownnamecolor = nil
+    -- Resolve the name colour independently from the healthbar colour.
+    local colorUnit = plate.unit or unitstr
+    local nameR, nameG, nameB, nameA = GetStringColor(
+      plate.isCritter and C.nameplates.critternamecolor or
+      (isFriendly and C.nameplates.friendlynamecolor or C.nameplates.enemynamecolor))
+    if plate.isNeutral then
+      nameR, nameG, nameB, nameA = unpack(unitcolors["NEUTRAL_NPC"])
     end
-
-    -- read the class colour directly rather than reusing the bar's r,g,b: the
-    -- bar only carries a class colour when friendclassc happens to be on, and
-    -- it also picks up the tapped-grey and barcombatstate overrides, neither of
-    -- which belongs on the name.
-    if ownname then
-      local cr, cg, cb, ca = PFUI_CLASS_COLORS[class]:GetRGBA()
-      if cr + cg + cb ~= plate.cache.ownnamecolor then
-        plate.cache.ownnamecolor = cr + cg + cb
-        plate.name:SetTextColor(cr, cg, cb, ca)
+    local petHappiness = colorUnit and UnitIsUnit(colorUnit, "pet") and GetPetHappiness and GetPetHappiness() or nil
+    local reaction = unittype == "FRIENDLY_NPC" and colorUnit and UnitReaction and UnitReaction("player", colorUnit) or nil
+    local petColor = petHappiness and PET_HAPPINESS_NAME_COLORS[petHappiness]
+    if not plate.isCritter and petColor then
+      nameR, nameG, nameB, nameA = unpack(petColor)
+    elseif not plate.isCritter and reaction then
+      local factionColor = FACTION_BAR_COLORS and FACTION_BAR_COLORS[reaction]
+      if factionColor then
+        nameR, nameG, nameB, nameA = factionColor.r, factionColor.g, factionColor.b, 1
+      elseif REACTION_NAME_COLORS[reaction] then
+        nameR, nameG, nameB, nameA = unpack(REACTION_NAME_COLORS[reaction])
       end
+    elseif not plate.isCritter and class and ((unittype == "ENEMY_PLAYER" and C.nameplates.enemyclassc == "1") or
+      (unittype == "FRIENDLY_PLAYER" and C.nameplates.friendclassnamec == "1")) then
+      nameR, nameG, nameB, nameA = PFUI_CLASS_COLORS[class]:GetRGBA()
     end
+
+    local nameColorKey = tostring(unittype) .. ":" .. tostring(class or "") .. ":" ..
+      tostring(reaction or "") .. ":" .. tostring(petHappiness or "") .. ":" ..
+      tostring(plate.isCritter) .. ":" .. tostring(C.nameplates.enemynamecolor) .. ":" .. tostring(C.nameplates.friendlynamecolor) .. ":" .. tostring(C.nameplates.critternamecolor) .. ":" ..
+      tostring(C.nameplates.enemyclassc) .. ":" .. tostring(C.nameplates.friendclassnamec)
+    if plate.cache.nameColorKey ~= nameColorKey then
+      plate.cache.nameColorKey = nameColorKey
+      plate.cache.nameR, plate.cache.nameG, plate.cache.nameB, plate.cache.nameA = nameR, nameG, nameB, nameA
+      plate.name:SetTextColor(nameR, nameG, nameB, nameA)
+    end
+
+    -- Name colour ownership is handled entirely above.
 
     if target and C.nameplates.cpdisplay == "1" then
       local cp = GetComboPoints("target")
@@ -1787,8 +1865,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
     -- =========================================================================
     -- OVERLAP/CLICKTHROUGH HANDLING
     -- =========================================================================
-    local overlapEnabled = nameplate.overlapEnabled
-    if overlapEnabled == nil then overlapEnabled = cfg.overlap_enemy end
+    local overlapEnabled = ShouldOverlap(nameplate)
     local useOverlap = overlapEnabled or C.nameplates["vertical_offset"] ~= "0"
     local clickable = C.nameplates["clickthrough"] ~= "1"
 
@@ -1870,30 +1947,19 @@ nameplates:RegisterEvent("ADDON_LOADED")
       update = true
     end
 
-    -- trigger update when name color changed (includes combat state check).
-    -- Skipped once OnDataChanged owns the name colour (class-coloured friendly
-    -- players), so the two writers cannot overwrite each other.
-    if not nameplate.cache.ownname then
-      local r, g, b = original.name:GetTextColor()
-      local unit = nameplate.unit
-      local inCombatWithPlayer = cfg.namefightcolor and unit and UnitExists(unit) and
-        UnitAffectingCombat(unit) and UnitAffectingCombat("player")
-
-      if r + g + b ~= nameplate.cache.namecolor or (cfg.namefightcolor and nameplate.cache.inCombat ~= inCombatWithPlayer) then
-        nameplate.cache.namecolor = r + g + b
-        nameplate.cache.inCombat = inCombatWithPlayer
-
-        if cfg.namefightcolor then
-          if (r > .9 and g < .2 and b < .2) or inCombatWithPlayer then
-            nameplate.name:SetTextColor(1,0.4,0.2,1)
-          else
-            nameplate.name:SetTextColor(r,g,b,1)
-          end
-        else
-          nameplate.name:SetTextColor(1,1,1,1)
-        end
-        update = true
+    -- Combat highlighting is layered over the configured/dynamic base colour.
+    local unit = nameplate.unit
+    local inCombatWithPlayer = cfg.namefightcolor and unit and UnitExists(unit) and
+      UnitAffectingCombat(unit) and UnitAffectingCombat("player") or nil
+    if nameplate.cache.inCombat ~= inCombatWithPlayer then
+      nameplate.cache.inCombat = inCombatWithPlayer
+      if inCombatWithPlayer then
+        nameplate.name:SetTextColor(1, .4, .2, 1)
+      elseif nameplate.cache.nameR then
+        nameplate.name:SetTextColor(nameplate.cache.nameR, nameplate.cache.nameG,
+          nameplate.cache.nameB, nameplate.cache.nameA)
       end
+      update = true
     end
 
     -- trigger update when level color changed. Skipped while the level came
@@ -2109,6 +2175,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
     local disableFriendly = C.nameplates["disable_friendly_in_friendly"] == "1"
     local pvpType = GetZonePVPInfo()
     local nowFriendly = (pvpType == "friendly")
+    inFriendlyArea = nowFriendly
     
     if nowFriendly and (disableHostile or disableFriendly) then
       if not inFriendlyZone then
@@ -2178,7 +2245,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
     local parent = self
     local nameplate = self.nameplate
     local overlapEnabled = cfg.overlap_enemy
-    if nameplate.isFriendly then overlapEnabled = cfg.overlap_friendly end
+    if nameplate.isFriendly or nameplate.isNeutral then overlapEnabled = cfg.overlap_friendly end
     nameplate.overlapEnabled = overlapEnabled
 
     -- disable all clicks for now
@@ -2211,7 +2278,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
 
     -- Keep mouse ownership on the correct frame when a pooled nameplate changes
     -- between friendly and non-friendly units.
-    if (nameplate.overlapEnabled or C.nameplates["vertical_offset"] ~= "0") then
+    if (ShouldOverlap(nameplate) or C.nameplates["vertical_offset"] ~= "0") then
       nameplate.parent:EnableMouse(false)
     else
       nameplate:EnableMouse(false)

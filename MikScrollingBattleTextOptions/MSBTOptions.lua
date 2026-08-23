@@ -2879,8 +2879,10 @@ function MikSBTOpt.UpdateFontPreviews()
  -- Make sure the normal font index is valid.
  if (fontIndex ~= nil) then
   local previewText = getglobal(FONT_SETTINGS_FRAME_NAME .. "NormalPreviewText");
-  previewText:SetFont(MikSBT.AVAILABLE_FONTS[fontIndex].Path, fontSize, MikSBT.AVAILABLE_OUTLINES[outlineIndex].Style);
-  previewText:SetTextHeight(fontSize);
+   fontSize = tonumber(fontSize) or 12;
+   if fontSize < 1 then fontSize = 1; end
+   previewText:SetFont(MikSBT.AVAILABLE_FONTS[fontIndex].Path, fontSize, MikSBT.AVAILABLE_OUTLINES[outlineIndex].Style);
+   previewText:SetTextHeight(fontSize);
  end
 
 
@@ -2915,8 +2917,10 @@ function MikSBTOpt.UpdateFontPreviews()
   end
 
   -- Make sure the crit font index is valid.
-  if (fontCritIndex ~= nil) then
+   if (fontCritIndex ~= nil) then
    local previewText = getglobal(FONT_SETTINGS_FRAME_NAME .. "CritPreviewText");
+   fontSizeCrit = tonumber(fontSizeCrit) or 12;
+   if fontSizeCrit < 1 then fontSizeCrit = 1; end
    previewText:SetFont(MikSBT.AVAILABLE_FONTS[fontCritIndex].Path, fontSizeCrit, MikSBT.AVAILABLE_OUTLINES[outlineCritIndex].Style);
    previewText:SetTextHeight(fontSizeCrit);
   end

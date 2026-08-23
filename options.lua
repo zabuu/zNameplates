@@ -67,6 +67,8 @@ local pages = {
       { "check", "Click-through nameplates", {"nameplates","clickthrough"} },
       { "check", "Allow enemy nameplate overlap", {"nameplates","overlap_enemy"} },
       { "check", "Allow friendly nameplate overlap", {"nameplates","overlap_friendly"} },
+      { "check", "Overlap all plates in friendly areas", {"nameplates","overlap_friendly_area"} },
+      { "check", "Never overlap plates in combat with me", {"nameplates","overlap_combat"} },
       { "check", "Right-click mouselook/attack", {"nameplates","rightclick"} },
       { "input", "Right-click threshold", {"nameplates","clickthreshold"} },
       { "check", "Replace totems with icons", {"nameplates","totemicons"} },
@@ -83,6 +85,9 @@ local pages = {
       { "select", "Health text alignment", {"nameplates","hptextpos"}, alignments },
       { "select", "Name text alignment", {"nameplates","nametextpos"}, alignments },
       { "select", "Health text format", {"nameplates","hptextformat"}, healthFormats },
+      { "color", "Enemy name color", {"nameplates","enemynamecolor"} },
+      { "color", "Friendly name color", {"nameplates","friendlynamecolor"} },
+      { "color", "Critter name color", {"nameplates","critternamecolor"} },
       { "check", "Vertical healthbar", {"nameplates","verticalhealth"} },
       { "check", "Hide bar: enemy NPCs", {"nameplates","enemynpc"} },
       { "check", "Hide bar: enemy players", {"nameplates","enemyplayer"} },
@@ -221,6 +226,8 @@ frame:RegisterForDrag("LeftButton")
 frame:SetScript("OnDragStart", function() this:StartMoving() end)
 frame:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
 frame:SetBackdrop({ bgFile="Interface\\DialogFrame\\UI-DialogBox-Background", edgeFile="Interface\\DialogFrame\\UI-DialogBox-Border", tile=true, tileSize=32, edgeSize=32, insets={left=11,right=12,top=12,bottom=11} })
+frame:SetBackdropColor(0.03, 0.03, 0.03, 0.90)
+frame:SetBackdropBorderColor(0.65, 0.65, 0.65, 1)
 frame:Hide()
 
 local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -229,6 +236,14 @@ title:SetText("zNameplates")
 local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("TOP", title, "BOTTOM", 0, -5)
 subtitle:SetText("Standalone nameplates with embedded MSBT combat text")
+subtitle:SetTextColor(0.75, 0.75, 0.75, 1)
+
+local divider = frame:CreateTexture(nil, "ARTWORK")
+divider:SetTexture("Interface\\BUTTONS\\WHITE8X8")
+divider:SetVertexColor(0.55, 0.55, 0.55, 0.25)
+divider:SetPoint("TOP", frame, "TOP", 0, -100)
+divider:SetPoint("BOTTOM", frame, "BOTTOM", 0, 70)
+divider:SetWidth(1)
 
 local closeX = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
 closeX:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
@@ -239,10 +254,11 @@ local widgets = {}
 local activeTab = 1
 
 local function Label(parent, text, x, y)
-  local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   label:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
   label:SetWidth(230)
   label:SetJustifyH("LEFT")
+  label:SetTextColor(0.95, 0.95, 0.95, 1)
   label:SetText(text)
   return label
 end
@@ -254,8 +270,11 @@ local function ApplyColor(path, oldValue)
 end
 
 local function CreateWidget(parent, item, index)
-  local col = math.floor((index - 1) / 12)
-  local row = math.mod(index - 1, 12)
+  -- Keep pages at two readable columns. Thirteen rows fit comfortably above
+  -- the footer and prevent the extra name-color controls from creating a
+  -- clipped third column on the Health tab.
+  local col = math.floor((index - 1) / 13)
+  local row = math.mod(index - 1, 13)
   local x = 22 + col * 390
   local y = -18 - row * 34
   local kind, text, path = item[1], item[2], item[3]
@@ -275,6 +294,8 @@ local function CreateWidget(parent, item, index)
     input:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 5)
     input:SetWidth(item[4] or 105); input:SetHeight(24)
     input:SetAutoFocus(false)
+    input:SetTextColor(1, 1, 1, 1)
+    input:SetJustifyH("LEFT")
     local function Commit() SetValue(path, input:GetText()) end
     input:SetScript("OnEditFocusGained", function() this.zNameplatesEditing = true end)
     input:SetScript("OnEnterPressed", function() Commit(); this:ClearFocus() end)
