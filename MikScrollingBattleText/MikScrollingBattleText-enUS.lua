@@ -1,4 +1,4 @@
-local L = AceLibrary("AceLocale-2.2"):new("MikScrollingBattleText")
+local L = AceLibrary("AceLocale-2.2"):new("zNameplates")
 
 L:RegisterTranslations("enUS", function()
 	return {

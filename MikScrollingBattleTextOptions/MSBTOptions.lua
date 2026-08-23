@@ -98,13 +98,17 @@ function MikSBTOpt.OnEvent()
  -- When an addon is loaded.
  if (event == "ADDON_LOADED") then
   -- Make sure it's this addon.
-  if (arg1 == string.gsub(MikSBT.MOD_NAME .. "Options", "%s", "")) then
+  if (arg1 == MikSBT.MOD_NAME) then
 
    -- Don't get notification for other addons being loaded.
    this:UnregisterEvent("ADDON_LOADED");
 
-   -- Initialize the options.
-   MikSBTOpt.Init();
+   -- Initialize the embedded runtime first regardless of event frame order.
+   if (zNameplates and zNameplates.EnsureEmbeddedMSBT) then
+    zNameplates.EnsureEmbeddedMSBT();
+   else
+    MikSBTOpt.Init();
+   end
   end
  end
 end
@@ -114,6 +118,8 @@ end
 -- Called when the mod is fully loaded (variables loaded).
 -- **********************************************************************************
 function MikSBTOpt.Init()
+ if (MikSBTOpt.EmbeddedInitialized) then return; end
+
  -- Set the options window title.
  getglobal(OPTIONS_FRAME_NAME .. "TitleText"):SetText(MikSBT.WINDOW_TITLE);
 
@@ -166,6 +172,7 @@ function MikSBTOpt.Init()
 
  -- Insert the frame name into the UISpecialFrames array so it closes when the escape key is pressed.
  table.insert(UISpecialFrames, OPTIONS_FRAME_NAME);
+ MikSBTOpt.EmbeddedInitialized = true;
 end
 
 
@@ -173,6 +180,11 @@ end
 -- Called when the options frame is shown.
 -- **********************************************************************************
 function MikSBTOpt.OnShow()
+ if (zNameplates and zNameplates.EnsureEmbeddedMSBT) then
+  zNameplates.EnsureEmbeddedMSBT();
+ end
+ if (not MikSBT.CurrentProfile) then return; end
+
  -- Holds whether or not to play a sound.
  local doPlaySound = true;
 
@@ -2174,7 +2186,13 @@ function MikSBTOpt.CountTriggers()
  local numTriggers = 0;
 
  -- Loop through all of the trigger entries.
- for _, triggerSettings in MikSBT.CurrentProfile.Triggers do
+ local profile = MikSBT.CurrentProfile;
+ if (not profile and MikSBT_Save and MikSBT_Save.Profiles) then
+  profile = MikSBT_Save.Profiles[MikSBT_Save.CurrentProfile] or MikSBT_Save.Profiles.Default;
+  MikSBT.CurrentProfile = profile;
+ end
+ if (not profile or not profile.Triggers) then return 0; end
+ for _, triggerSettings in profile.Triggers do
   numTriggers = numTriggers + 1;
  end
 
@@ -2191,7 +2209,13 @@ function MikSBTOpt.CountSuppressions()
  local numSuppressions = 0;
 
  -- Loop through all of the suppression entries.
- for _, suppressionSettings in MikSBT.CurrentProfile.Suppressions do
+ local profile = MikSBT.CurrentProfile;
+ if (not profile and MikSBT_Save and MikSBT_Save.Profiles) then
+  profile = MikSBT_Save.Profiles[MikSBT_Save.CurrentProfile] or MikSBT_Save.Profiles.Default;
+  MikSBT.CurrentProfile = profile;
+ end
+ if (not profile or not profile.Suppressions) then return 0; end
+ for _, suppressionSettings in profile.Suppressions do
   numSuppressions = numSuppressions + 1;
  end
 

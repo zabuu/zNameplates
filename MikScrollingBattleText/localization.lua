@@ -11,7 +11,7 @@ MikSBT = {};
 -- Mod Constants
 -------------------------------------------------------------------------------
 
-MikSBT.MOD_NAME		= "MikScrollingBattleText"
+MikSBT.MOD_NAME		= "zNameplates"
 MikSBT.VERSION_NUMBER	= 4.7;
 MikSBT.VERSION_STRING	= "v4.7 OctoWoW";
 MikSBT.WINDOW_TITLE	= "Mik's Scrolling Battle Text " .. MikSBT.VERSION_STRING .. " - \124cffF58CBA\124hAthene Edit\124h\124r";
@@ -129,6 +129,12 @@ MikSBT.AVAILABLE_FONTS = {
 };
 end
 
+-- The MSBT runtime is embedded inside zNameplates rather than installed as a
+-- sibling addon. Keep the original font table and redirect only its addon path.
+for _, fontInfo in MikSBT.AVAILABLE_FONTS do
+ fontInfo.Path = string.gsub(fontInfo.Path, "Interface\\Addons\\MikScrollingBattleText\\", "Interface\\Addons\\zNameplates\\MikScrollingBattleText\\");
+end
+
 -- Holds the available font outlines.
 MikSBT.AVAILABLE_OUTLINES = {
  [1] = {Name="None", Style=""},
@@ -205,7 +211,7 @@ MikSBT.DEFAULT_CONFIG = {
  CreationVersion 					= MikSBT.VERSION_NUMBER,
  ShowPartialEffects				= true,
  ShowOverheals					= true,
- ShowGameDamage					= true,
+ ShowGameDamage					= false,
  UseStickyCrits					= true,
  ShowAllManaGains				= false,
  LowHealthSound					= true,

@@ -263,18 +263,23 @@ function MikSBT.OnEvent()
  if (event == "ADDON_LOADED") then
  
   -- Set Game Damage font
- if MikSBT_Save and MikSBT_Save.Profiles[MikSBT_Save.CurrentProfile].BlizzardFontSettings then
-	DAMAGE_TEXT_FONT = MikSBT.AVAILABLE_FONTS[MikSBT_Save.Profiles[MikSBT_Save.CurrentProfile].BlizzardFontSettings.Normal.FontIndex].Path or "Fonts\\FRIZQT__.TTF"
+ local savedProfile = MikSBT_Save and MikSBT_Save.Profiles and MikSBT_Save.CurrentProfile and MikSBT_Save.Profiles[MikSBT_Save.CurrentProfile];
+ if savedProfile and savedProfile.BlizzardFontSettings then
+	DAMAGE_TEXT_FONT = MikSBT.AVAILABLE_FONTS[savedProfile.BlizzardFontSettings.Normal.FontIndex].Path or "Fonts\\FRIZQT__.TTF"
  end
  
   -- Make sure it's this addon.
-  if (arg1 == MikSBT.MOD_NAME) then
+  if (arg1 == MikSBT.MOD_NAME and not MikSBT.EmbeddedRuntimeInitialized) then
+   if (zNameplates and zNameplates.EnsureEmbeddedMSBT) then
+    zNameplates.EnsureEmbeddedMSBT();
+   else
+    -- Register for the events the helper is interested in receiving.
+    MikSBT.RegisterEvents();
 
-   -- Register for the events the helper is interested in receiving.
-   MikSBT.RegisterEvents();
-
-   -- Initialize the mod.
-   MikSBT.Init();
+    -- Initialize the mod.
+    MikSBT.Init();
+    MikSBT.EmbeddedRuntimeInitialized = true;
+   end
   end
 
  end
@@ -1802,7 +1807,7 @@ function MikSBT.AddAnimation(animationEvent)
   if MikSBT.CurrentProfile.ResistSound then
     if animationEvent.EffectName then
       if (string.find(animationEvent.EffectName, "Cone of Cold") or string.find(animationEvent.EffectName, "Frost Nova")) then
-        PlaySoundFile("Interface\\AddOns\\MikScrollingBattleText\\sounds\\Resist.mp3");
+        PlaySoundFile("Interface\\AddOns\\zNameplates\\MikScrollingBattleText\\sounds\\Resist.mp3");
       end
     end
   end
@@ -2718,14 +2723,8 @@ function MikSBT.CommandHandler(params)
 
  -- Look for the recognized parameters.
  if (currentParam == "") then
-  -- Check if the load on demand options are not loaded.
-  if (not IsAddOnLoaded(MikSBT.MOD_NAME .. "Options")) then
-   -- Load the on demand options.
-   UIParentLoadAddOn(MikSBT.MOD_NAME .. "Options");
-  end
-
-  -- Make sure the on demand options actually loaded.
-  if (IsAddOnLoaded(MikSBT.MOD_NAME .. "Options")) then
+  -- zNameplates embeds the options in the same addon.
+  if (MSBTFrameOptions) then
    -- Make sure the scroll area mover control frame is not shown.
    if (not MSBTScrollAreaMoverControlFrame:IsShown()) then
     -- Show the options interface.

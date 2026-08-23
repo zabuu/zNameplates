@@ -3885,7 +3885,7 @@ function MikCEH.ParseSelfHealthTriggers()
    local eventData = MikCEH.GetThresholdTriggerEventData(triggerKey, healthAmount);
    MikCEH.SendTriggerEvent(eventData);
    if MikSBT.CurrentProfile.LowHealthSound then
-	PlaySoundFile("Interface\\AddOns\\MikScrollingBattleText\\sounds\\LowHealth.mp3");
+	PlaySoundFile("Interface\\AddOns\\zNameplates\\MikScrollingBattleText\\sounds\\LowHealth.mp3");
    end
   end
  end
@@ -3919,7 +3919,7 @@ function MikCEH.ParseSelfManaTriggers()
     local eventData = MikCEH.GetThresholdTriggerEventData(triggerKey, manaAmount);
     MikCEH.SendTriggerEvent(eventData);
 	if MikSBT.CurrentProfile.LowManaSound then
-	   PlaySoundFile("Interface\\AddOns\\MikScrollingBattleText\\sounds\\LowMana.mp3");
+	   PlaySoundFile("Interface\\AddOns\\zNameplates\\MikScrollingBattleText\\sounds\\LowMana.mp3");
 	end
    end
   end
