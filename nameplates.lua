@@ -1142,6 +1142,14 @@ nameplates:RegisterEvent("ADDON_LOADED")
       end
     end
 
+    -- Region ordering differs between OctoWoW client builds. Supply inert
+    -- fallbacks for optional Blizzard regions so a missing name/level region
+    -- cannot abort the central updater before the real unit data arrives.
+    if not nameplate.original.name then nameplate.original.name = nameplate:CreateFontString(nil, "OVERLAY"); DisableObject(nameplate.original.name) end
+    if not nameplate.original.level then nameplate.original.level = nameplate:CreateFontString(nil, "OVERLAY"); DisableObject(nameplate.original.level) end
+    if not nameplate.original.guild then nameplate.original.guild = nameplate:CreateFontString(nil, "OVERLAY"); DisableObject(nameplate.original.guild) end
+    if not nameplate.original.levelicon then nameplate.original.levelicon = nameplate:CreateTexture(nil, "OVERLAY"); DisableObject(nameplate.original.levelicon) end
+
     -- Some OctoWoW client builds expose HookScript but do not declare an
     -- OnValueChanged handler on Blizzard's nameplate statusbar. The central
     -- updater already mirrors values, so treat this hook as an optional fast
@@ -1856,6 +1864,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
     
     local update
     local original = nameplate.original
+    if not original or not original.name or not original.name.GetText then return end
     local name = original.name:GetText()
     local mouseover = nameplate.cachedGuid and nameplate.cachedGuid == frameState.mouseoverGuid or nil
 
