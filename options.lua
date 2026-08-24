@@ -50,6 +50,7 @@ local pages = {
     items = {
       { "check", "Show hostile nameplates", {"nameplates","showhostile"} },
       { "check", "Show friendly nameplates", {"nameplates","showfriendly"} },
+      { "check", "Hide Blizzard XP floating text", {"nameplates","hide_blizzard_xp"} },
       { "check", "Disable hostile plates in friendly zones", {"nameplates","disable_hostile_in_friendly"} },
       { "check", "Disable friendly plates in friendly zones", {"nameplates","disable_friendly_in_friendly"} },
       { "input", "Vertical offset", {"nameplates","vertical_offset"} },

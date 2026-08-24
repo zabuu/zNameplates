@@ -75,6 +75,7 @@ local defaults = {
     combatcasting = ".7,.2,.7,1", combatofftanks = "",
     outfriendly = "0", outfriendlynpc = "1", outneutral = "1", outenemy = "1",
     targethighlight = "0", highlightcolor = "1,1,1,1",
+    hide_blizzard_xp = "0",
     enemynamecolor = "1,1,1,1", friendlynamecolor = ".2,1,.2,1",
     critternamecolor = "1,1,1,.35",
     showhp = "0", hptextpos = "RIGHT", nametextpos = "CENTER",
@@ -376,8 +377,42 @@ end
 
 function Z.Refresh()
   UpdateFonts()
+  if Z.ApplyBlizzardXPText then Z.ApplyBlizzardXPText() end
   if Z.nameplates and Z.nameplates.UpdateConfig then Z.nameplates.UpdateConfig() end
   if Z.options and Z.options.Refresh then Z.options:Refresh() end
+end
+
+local originalCombatTextAddMessage
+local hiddenCombatTextAddMessage
+
+local function IsExperienceFloatingText(message)
+  if type(message) ~= "string" then return nil end
+  local text = string.lower(message)
+  return string.find(text, "xp", 1, true) or
+    string.find(text, "experience", 1, true) or
+    string.find(text, "经验", 1, true) or
+    string.find(text, "경험", 1, true) or
+    string.find(text, "経験", 1, true)
+end
+
+function Z.ApplyBlizzardXPText()
+  local hide = Z.config and Z.config.nameplates and Z.config.nameplates.hide_blizzard_xp == "1"
+  if hide then
+    if not hiddenCombatTextAddMessage and CombatText_AddMessage then
+      originalCombatTextAddMessage = CombatText_AddMessage
+      hiddenCombatTextAddMessage = function(message, scrollFunction, r, g, b, displayType, isStaggered)
+        if displayType == "xp" or displayType == "XP_GAIN" or IsExperienceFloatingText(message) then return end
+        return originalCombatTextAddMessage(message, scrollFunction, r, g, b, displayType, isStaggered)
+      end
+      CombatText_AddMessage = hiddenCombatTextAddMessage
+    end
+  elseif hiddenCombatTextAddMessage then
+    if CombatText_AddMessage == hiddenCombatTextAddMessage then
+      CombatText_AddMessage = originalCombatTextAddMessage
+    end
+    hiddenCombatTextAddMessage = nil
+    originalCombatTextAddMessage = nil
+  end
 end
 
 function Z.Reset()
@@ -421,6 +456,7 @@ loader:SetScript("OnEvent", function()
   RebaseTable(zNameplatesDB.config)
   Z.config = zNameplatesDB.config
   UpdateFonts()
+  Z.ApplyBlizzardXPText()
 
   if Z.EnsureEmbeddedMSBT then Z.EnsureEmbeddedMSBT() end
 

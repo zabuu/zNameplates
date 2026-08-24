@@ -1118,6 +1118,24 @@ nameplates:RegisterEvent("ADDON_LOADED")
     platecount = platecount + 1
     local platename = "zNamePlate" .. platecount
 
+    -- Blizzard's nameplate child order is not consistent across OctoWoW client
+    -- builds (and other addons may insert children of their own). Resolve the
+    -- bars before adding our overlay, and only accept StatusBar-like children.
+    local originalHealthbar, originalCastbar
+    local originalChildren = { parent:GetChildren() }
+    for i = 1, table.getn(originalChildren) do
+      local object = originalChildren[i]
+      if object and object.GetValue and object.GetMinMaxValues
+        and object.GetStatusBarColor and object.SetStatusBarTexture then
+        if not originalHealthbar then
+          originalHealthbar = object
+        elseif not originalCastbar then
+          originalCastbar = object
+          break
+        end
+      end
+    end
+
     -- create zNameplates overlay
     local nameplate = CreateFrame("Button", platename, parent)
     nameplate.platename = platename
@@ -1127,7 +1145,8 @@ nameplates:RegisterEvent("ADDON_LOADED")
     nameplate.original = {}
 
     -- create shortcuts for all known elements and disable them
-    nameplate.original.healthbar, nameplate.original.castbar = parent:GetChildren()
+    nameplate.original.healthbar = originalHealthbar
+    nameplate.original.castbar = originalCastbar
     DisableObject(nameplate.original.healthbar)
     DisableObject(nameplate.original.castbar)
 
@@ -1380,16 +1399,20 @@ nameplates:RegisterEvent("ADDON_LOADED")
 
   nameplates.OnValueChanged = function()
     local plate = this:GetParent().nameplate
-    if plate and plate.health then
-      plate.health:SetMinMaxValues(plate.original.healthbar:GetMinMaxValues())
-      plate.health:SetValue(plate.original.healthbar:GetValue())
+    local healthbar = plate and plate.original and plate.original.healthbar
+    if plate and plate.health and healthbar and healthbar.GetMinMaxValues and healthbar.GetValue then
+      plate.health:SetMinMaxValues(healthbar:GetMinMaxValues())
+      plate.health:SetValue(healthbar:GetValue())
     end
   end
 
   nameplates.OnDataChanged = function(self, plate)
+    local healthbar = plate and plate.original and plate.original.healthbar
+    if not healthbar or not healthbar.GetValue or not healthbar.GetMinMaxValues then return end
+
     local visible = plate:IsVisible()
-    local hp = plate.original.healthbar:GetValue()
-    local hpmin, hpmax = plate.original.healthbar:GetMinMaxValues()
+    local hp = healthbar:GetValue()
+    local hpmin, hpmax = healthbar:GetMinMaxValues()
     local name = plate.original.name:GetText()
     local unitName = plate.unit and UnitName(plate.unit)
     if unitName then name = unitName end
@@ -1435,7 +1458,10 @@ nameplates:RegisterEvent("ADDON_LOADED")
       levelFromDB = true
     end
 
-    local red, green, blue = plate.original.healthbar:GetStatusBarColor()
+    local red, green, blue = 1, 0, 0
+    if healthbar.GetStatusBarColor then
+      red, green, blue = healthbar:GetStatusBarColor()
+    end
     local unittype = GetUnitType(red, green, blue) or "ENEMY_NPC"
     local font_size = C.nameplates.use_unitfonts == "1" and C.global.font_unit_size or C.global.font_size
 
