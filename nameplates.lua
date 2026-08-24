@@ -1142,7 +1142,14 @@ nameplates:RegisterEvent("ADDON_LOADED")
       end
     end
 
-    nameplate.original.healthbar:HookScript("OnValueChanged", nameplates.OnValueChanged)
+    -- Some OctoWoW client builds expose HookScript but do not declare an
+    -- OnValueChanged handler on Blizzard's nameplate statusbar. The central
+    -- updater already mirrors values, so treat this hook as an optional fast
+    -- path and never let it abort plate creation.
+    if nameplate.original.healthbar and nameplate.original.healthbar.HookScript then
+      pcall(nameplate.original.healthbar.HookScript, nameplate.original.healthbar,
+        "OnValueChanged", nameplates.OnValueChanged)
+    end
 
     -- adjust sizes and scaling of the nameplate
     nameplate:SetScale(UIParent:GetScale())
