@@ -84,249 +84,6 @@ function zNameplates.StartNameplates()
   local visiblePlates = {}
   local plateByGuid = {}
 
-  -- MSBT nameplate integration. MSBT owns combat parsing, merge rules, message
-  -- formatting, colors and fonts; zNameplates owns only per-nameplate placement and
-  -- animation frames.
-  local MSBT_TEXT_SLOTS = 10
-  local outgoingGuidHints = {}
-  local duplicateNameCursor = {}
-  local guidEventsEnabled
-
-  local function EnableMSBTGuidEvents()
-    if guidEventsEnabled or not GetNampowerVersion then return end
-    pcall(SetCVar, "NP_EnableAutoAttackEvents", "1")
-    pcall(SetCVar, "NP_EnableSpellDamageEvents", "1")
-    pcall(SetCVar, "NP_EnableSpellMissEvents", "1")
-    guidEventsEnabled = true
-  end
-
-  local function QueueOutgoingGuidHint(targetGuid, amount, spellId)
-    if not targetGuid or targetGuid == "0x0000000000000000" then return end
-    local now = GetTime()
-    for i = table.getn(outgoingGuidHints), 1, -1 do
-      if now - outgoingGuidHints[i].time > 1.5 then table.remove(outgoingGuidHints, i) end
-    end
-    local effectName
-    if spellId and GetSpellRecField then effectName = GetSpellRecField(spellId, "name") end
-    table.insert(outgoingGuidHints, {
-      guid = targetGuid,
-      amount = amount and tonumber(amount) or nil,
-      effectName = effectName,
-      isSpell = spellId ~= nil,
-      time = now,
-    })
-  end
-
-  local function ConsumeOutgoingGuidHint(animationEvent)
-    local now = GetTime()
-    local amount = animationEvent.Amount and tonumber(animationEvent.Amount) or nil
-    local isSpell = animationEvent.EffectName ~= nil
-    for i = 1, table.getn(outgoingGuidHints) do
-      local hint = outgoingGuidHints[i]
-      if now - hint.time <= 1.5 and hint.amount == amount and hint.isSpell == isSpell and
-          (not hint.effectName or not animationEvent.EffectName or hint.effectName == animationEvent.EffectName) then
-        table.remove(outgoingGuidHints, i)
-        return hint.guid
-      end
-    end
-    return nil
-  end
-
-  local function MSBTEnabled()
-    local enabled = C.nameplates.msbt_enable == "1" and MikSBT and
-      MikSBT.CurrentProfile and MikSBT.PrepareExternalAnimationEvent and
-      MikSBT.GetFontSize and MikSBT.GetFontPath and MikSBT.GetFontOutline and true or false
-    if enabled then EnableMSBTGuidEvents() end
-    return enabled
-  end
-
-  local function MSBTAlignment()
-    local align = C.nameplates.msbt_align or "CENTER"
-    if align == "LEFT" then return "BOTTOMLEFT", "LEFT" end
-    if align == "RIGHT" then return "BOTTOMRIGHT", "RIGHT" end
-    return "BOTTOM", "CENTER"
-  end
-
-  local function ClearMSBTAnimations(plate)
-    if not plate or not plate.msbt then return end
-    for i = 1, MSBT_TEXT_SLOTS do
-      local item = plate.msbt.items[i]
-      item.active = nil
-      item.text:Hide()
-    end
-    plate.msbt:Hide()
-  end
-
-  local function ConfigureMSBTFrame(plate)
-    if not plate or not plate.msbt then return end
-    local frame = plate.msbt
-    local width = tonumber(C.nameplates.width) or 120
-    local height = tonumber(C.nameplates.msbt_height) or 80
-    local x = tonumber(C.nameplates.msbt_x) or 0
-    local y = tonumber(C.nameplates.msbt_y) or 8
-    if height < 10 then height = 10 end
-
-    frame:ClearAllPoints()
-    frame:SetPoint("BOTTOM", plate.health, "TOP", x, y)
-    frame:SetSize(width, height)
-    frame:SetFrameLevel(3) -- behind the health bar (level 4), positioned above it
-    frame.configHeight = height
-  end
-
-  local function CreateMSBTFrame(plate)
-    local frame = CreateFrame("Frame", nil, plate)
-    frame:SetFrameLevel(3)
-    frame.items = {}
-    for i = 1, MSBT_TEXT_SLOTS do
-      -- OctoWoW rejects SetText on a FontString that has never had a font.
-      -- Keep GameFontNormal as a safe fallback until MSBT applies its font.
-      local item = { text = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal") }
-      item.text:Hide()
-      frame.items[i] = item
-    end
-    frame:Hide()
-    plate.msbt = frame
-    ConfigureMSBTFrame(plate)
-  end
-
-  local function FindMSBTNameplate(unitName, targetGuid)
-    if targetGuid and plateByGuid[targetGuid] then return plateByGuid[targetGuid] end
-    if not unitName or unitName == "" then return nil end
-
-    local matches = {}
-    for parent in pairs(visiblePlates) do
-      local plate = parent.nameplate
-      if plate and plate.unit and UnitName(plate.unit) == unitName then
-        table.insert(matches, plate)
-      elseif plate and plate.original and plate.original.name and plate.original.name:GetText() == unitName then
-        table.insert(matches, plate)
-      end
-    end
-    local count = table.getn(matches)
-    if count == 0 then return nil end
-    if count == 1 then return matches[1] end
-
-    -- Legacy combat-chat events only contain a name. Spread duplicate-name AoE
-    -- events across matching plates instead of pinning every hit to the target.
-    local cursor = (duplicateNameCursor[unitName] or 0) + 1
-    if cursor > count then cursor = 1 end
-    duplicateNameCursor[unitName] = cursor
-    return matches[cursor]
-  end
-
-  local function AddMSBTAnimation(plate, animationEvent)
-    if not plate or not plate.msbt then return end
-    local frame = plate.msbt
-    ConfigureMSBTFrame(plate)
-
-    local now = GetTime()
-    local slot, oldest
-    for i = 1, MSBT_TEXT_SLOTS do
-      local item = frame.items[i]
-      if not item.active then
-        slot = item
-        break
-      elseif not oldest or item.startTime < oldest.startTime then
-        oldest = item
-      end
-    end
-    slot = slot or oldest
-    if not slot then return end
-
-    local settings = animationEvent.EventSettings
-    local size = MikSBT.GetFontSize(animationEvent.ScrollArea, settings, animationEvent.IsCrit)
-    local font = MikSBT.GetFontPath(animationEvent.ScrollArea, settings, animationEvent.IsCrit)
-    local outline = MikSBT.GetFontOutline(animationEvent.ScrollArea, settings, animationEvent.IsCrit)
-    local anchor, justify = MSBTAlignment()
-    local spacing = size + 8
-
-    -- Give simultaneous hits room while retaining an independent queue per plate.
-    for i = 1, MSBT_TEXT_SLOTS do
-      local item = frame.items[i]
-      if item.active and item ~= slot and item.position < spacing then
-        item.position = math.min(frame.configHeight, item.position + spacing)
-      end
-    end
-
-    slot.active = true
-    slot.startTime = now
-    slot.lastUpdate = now
-    slot.position = 0
-    slot.anchor = anchor
-    slot.text:ClearAllPoints()
-    slot.text:SetPoint(anchor, frame, anchor, 0, 0)
-    slot.text:SetJustifyH(justify)
-    slot.text:SetFont(font, size - 1, outline)
-    slot.text:SetTextHeight(size)
-    slot.text:SetTextColor(settings.FontSettings.Color.r, settings.FontSettings.Color.g, settings.FontSettings.Color.b)
-    slot.text:SetText(animationEvent.Text)
-    slot.text:SetAlpha(1)
-    slot.text:Show()
-    frame:Show()
-  end
-
-  local function UpdateMSBTAnimations(plate, now)
-    local frame = plate and plate.msbt
-    if not frame or not frame:IsShown() then return end
-    if not MSBTEnabled() then
-      ClearMSBTAnimations(plate)
-      return
-    end
-
-    local height = frame.configHeight or tonumber(C.nameplates.msbt_height) or 80
-    local speed = tonumber(MikSBT.CurrentProfile.TextSpeed) or 75
-    local fadeDelay = tonumber(C.nameplates.msbt_fade) or .5
-    if speed <= 0 then speed = 75 end
-    if fadeDelay < 0 then fadeDelay = 0 end
-    local travelTime = height / speed
-    local fadeTime = travelTime - fadeDelay
-    local anchor, justify = MSBTAlignment()
-    local anyActive
-
-    for i = 1, MSBT_TEXT_SLOTS do
-      local item = frame.items[i]
-      if item.active then
-        item.position = item.position + speed * (now - item.lastUpdate)
-        item.lastUpdate = now
-        local elapsed = now - item.startTime
-
-        if item.position >= height then
-          item.active = nil
-          item.text:Hide()
-        else
-          anyActive = true
-          local alpha = 1
-          if elapsed > fadeDelay and fadeTime > 0 then
-            alpha = 1 - ((elapsed - fadeDelay) / fadeTime)
-            if alpha < 0 then alpha = 0 end
-          end
-          item.anchor = anchor
-          item.text:ClearAllPoints()
-          item.text:SetPoint(anchor, frame, anchor, 0, item.position)
-          item.text:SetJustifyH(justify)
-          item.text:SetAlpha(alpha)
-        end
-      end
-    end
-
-    if not anyActive then frame:Hide() end
-  end
-
-  local function HandleMSBTOutgoing(animationEvent)
-    local targetName = animationEvent.Name
-    local targetGuid = animationEvent.TargetGUID or ConsumeOutgoingGuidHint(animationEvent)
-    if not MikSBT.PrepareExternalAnimationEvent(animationEvent) then return end
-    local plate = FindMSBTNameplate(targetName, targetGuid)
-    if plate then AddMSBTAnimation(plate, animationEvent) end
-  end
-
-  local function RegisterMSBTIntegration()
-    if MikSBT and MikSBT.RegisterOutgoingNameplateHandler then
-      MikSBT.RegisterOutgoingNameplateHandler(HandleMSBTOutgoing, MSBTEnabled, ConsumeOutgoingGuidHint)
-      MSBTEnabled()
-    end
-  end
-
   local raidGuidCache = {}  -- guid -> name (rebuilt on RAID_ROSTER_UPDATE/PARTY_MEMBERS_CHANGED)
   
   -- Per-GUID cast state, populated from ClassicAPI's UNIT_SPELLCAST_* events
@@ -699,7 +456,7 @@ function zNameplates.StartNameplates()
     plate.debuffs[index].icon:SetTexture(.3,1,.8,1)
     plate.debuffs[index].icon:SetAllPoints(plate.debuffs[index])
 
-    plate.debuffs[index].stacks = plate.debuffs[index]:CreateFontString(nil, "OVERLAY")
+    plate.debuffs[index].stacks = plate.debuffs[index]:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     plate.debuffs[index].stacks:SetAllPoints(plate.debuffs[index])
     plate.debuffs[index].stacks:SetJustifyH("RIGHT")
     plate.debuffs[index].stacks:SetJustifyV("BOTTOM")
@@ -791,46 +548,8 @@ nameplates:RegisterEvent("UNIT_SPELLCAST_STOP")
 nameplates:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
 nameplates:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 nameplates:RegisterEvent("PLAYER_GUILD_UPDATE")
-nameplates:RegisterEvent("ADDON_LOADED")
-
-  -- Nampower supplies destination GUIDs that the vanilla combat chat messages
-  -- do not. Unsupported custom events are harmlessly skipped on older clients.
-  local msbtGuidEvents = {
-    "AUTO_ATTACK_SELF", "AUTO_ATTACK_OTHER",
-    "SPELL_DAMAGE_EVENT_SELF", "SPELL_DAMAGE_EVENT_OTHER",
-    "SPELL_MISS_SELF", "SPELL_MISS_OTHER",
-  }
-  for _, eventName in msbtGuidEvents do
-    pcall(nameplates.RegisterEvent, nameplates, eventName)
-  end
-
-  -- The embedded MSBT files load earlier in zNameplates.toc. The event hook is
-  -- retained as a harmless fallback for development load-order changes.
-  RegisterMSBTIntegration()
   
   nameplates:SetScript("OnEvent", function()
-    if event == "AUTO_ATTACK_SELF" then
-      QueueOutgoingGuidHint(arg2, arg3 and arg3 > 0 and arg3 or nil, nil)
-      return
-    elseif event == "AUTO_ATTACK_OTHER" then
-      if arg1 == UnitGUID("pet") then
-        QueueOutgoingGuidHint(arg2, arg3 and arg3 > 0 and arg3 or nil, nil)
-      end
-      return
-    elseif event == "SPELL_DAMAGE_EVENT_SELF" then
-      QueueOutgoingGuidHint(arg1, arg4, arg3)
-      return
-    elseif event == "SPELL_DAMAGE_EVENT_OTHER" then
-      if arg2 == UnitGUID("pet") then QueueOutgoingGuidHint(arg1, arg4, arg3) end
-      return
-    elseif event == "SPELL_MISS_SELF" then
-      QueueOutgoingGuidHint(arg2, nil, arg3)
-      return
-    elseif event == "SPELL_MISS_OTHER" then
-      if arg1 == UnitGUID("pet") then QueueOutgoingGuidHint(arg2, nil, arg3) end
-      return
-    end
-
     -- Stop event handling during logout to prevent crash 132
     if event == "PLAYER_LOGOUT" then
       this:UnregisterAllEvents()
@@ -840,9 +559,6 @@ nameplates:RegisterEvent("ADDON_LOADED")
         nameplates.mouselook:SetScript("OnUpdate", nil)
       end
       return
-
-    elseif event == "ADDON_LOADED" and arg1 == "MikScrollingBattleText" then
-      RegisterMSBTIntegration()
 
     elseif event == "PLAYER_GUILD_UPDATE" and arg1 == 'player' then
       myGuild = GetGuildInfo("player")
@@ -915,7 +631,6 @@ nameplates:RegisterEvent("ADDON_LOADED")
         local wasVisible = visiblePlates[plate]
         visiblePlates[plate] = plate
         plateByUnit[arg1] = plate
-        ClearMSBTAnimations(plate.nameplate)
         local guid = UnitGUID(arg1)
         plate.nameplate.cachedGuid = guid
         plate.nameplate.unit = arg1
@@ -927,8 +642,12 @@ nameplates:RegisterEvent("ADDON_LOADED")
         plate.nameplate.isNeutral = nil
         plate.nameplate.isCritter = nil
         plate.nameplate.neutralProvoked = nil
+        plate.nameplate.taggedByPlayer = nil
+        plate.nameplate.taggedByOther = nil
         plate.nameplate.creatureType = nil  -- recompute for the new unit
         plate.nameplate.totemIcon = nil
+        plate.nameplate.questIconRevision = nil
+        if plate.nameplate.questIcon then plate.nameplate.questIcon:Hide() end
         if guid then
           plateByGuid[guid] = plate.nameplate
           -- Seed: the unit may already be mid-cast (its UNIT_SPELLCAST_START
@@ -950,7 +669,6 @@ nameplates:RegisterEvent("ADDON_LOADED")
         visiblePlateCount = visiblePlateCount > 0 and visiblePlateCount - 1 or 0
       end
       if plate then visiblePlates[plate] = nil end
-      if plate and plate.nameplate then ClearMSBTAnimations(plate.nameplate) end
       local guid = UnitGUID(arg1) or (plate and plate.nameplate and plate.nameplate.cachedGuid)
       if guid then
         if debuffCache[guid] then debuffCache[guid] = nil end
@@ -960,6 +678,8 @@ nameplates:RegisterEvent("ADDON_LOADED")
         if plateByGuid[guid] then plateByGuid[guid] = nil end
       end
       if plate and plate.nameplate then
+        if plate.nameplate.questIcon then plate.nameplate.questIcon:Hide() end
+        plate.nameplate.questIconRevision = nil
         plate.nameplate.cachedGuid = nil
         plate.nameplate.unit = nil
       end
@@ -1081,7 +801,6 @@ nameplates:RegisterEvent("ADDON_LOADED")
 
     for plate in pairs(visiblePlates) do
       if plate:IsVisible() then
-        UpdateMSBTAnimations(plate.nameplate, now)
         nameplates.OnUpdate(plate, frameState)
       end
     end
@@ -1187,20 +906,19 @@ nameplates:RegisterEvent("ADDON_LOADED")
     nameplate.health.text:SetAllPoints()
     nameplate.health.text:SetTextColor(1,1,1,1)
 
-    CreateMSBTFrame(nameplate)
-
-    nameplate.name = nameplate:CreateFontString(nil, "OVERLAY")
+    nameplate.name = nameplate:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     nameplate.name:SetPoint("TOP", nameplate, "TOP", 0, 0)
+    if zNameplates.CreateQuestIcon then zNameplates.CreateQuestIcon(nameplate) end
 
     nameplate.glow = nameplate:CreateTexture(nil, "BACKGROUND")
     nameplate.glow:SetPoint("CENTER", nameplate.health, "CENTER", 0, 0)
     nameplate.glow:SetTexture(zNameplates.media["img:dot"])
     nameplate.glow:Hide()
 
-    nameplate.guild = nameplate:CreateFontString(nil, "OVERLAY")
+    nameplate.guild = nameplate:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     nameplate.guild:SetPoint("BOTTOM", nameplate.health, "BOTTOM", 0, 0)
 
-    nameplate.level = nameplate:CreateFontString(nil, "OVERLAY")
+    nameplate.level = nameplate:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     nameplate.level:SetPoint("RIGHT", nameplate.health, "LEFT", -3, 0)
 
     -- Create a dedicated high-level frame for the raid icon so it renders
@@ -1332,6 +1050,7 @@ nameplates:RegisterEvent("ADDON_LOADED")
     nameplate:SetPoint("TOP", parent, "TOP", 0, 0)
 
     nameplate.name:SetFont(font, font_size, font_style)
+    if zNameplates.ConfigureQuestIcon then zNameplates.ConfigureQuestIcon(nameplate, font) end
     local nameTextPos = C.nameplates.nametextpos or "CENTER"
     local nameAnchor = nameTextPos == "RIGHT" and { "BOTTOMRIGHT", "TOPRIGHT" }
                     or nameTextPos == "CENTER" and { "BOTTOM", "TOP" }
@@ -1349,8 +1068,6 @@ nameplates:RegisterEvent("ADDON_LOADED")
     nameplate.health:SetWidth(C.nameplates.width)
     nameplate.health:SetHeight(C.nameplates.heighthealth)
     nameplate.health.hlr, nameplate.health.hlg, nameplate.health.hlb, nameplate.health.hla = hlr, hlg, hlb, hla
-
-    ConfigureMSBTFrame(nameplate)
 
     CreateBackdrop(nameplate.health, default_border)
 
@@ -1503,10 +1220,27 @@ nameplates:RegisterEvent("ADDON_LOADED")
     -- always make sure to keep plate visible
     plate:Show()
 
+    -- Tap ownership is only meaningful for NPC mobs. Unknown/untapped units
+    -- retain their normal visuals; only positive ownership signals alter them.
+    local tagUnit = plate.unit or unitstr
+    local playerControlled = tagUnit and UnitPlayerControlled and UnitPlayerControlled(tagUnit)
+    local enemyMob = (unittype == "ENEMY_NPC" or unittype == "NEUTRAL_NPC") and not playerControlled
+    local tapped = enemyMob and tagUnit and UnitIsTapped and UnitIsTappedByPlayer and UnitIsTapped(tagUnit)
+    -- Tap ownership persists when the mob changes target or the player changes
+    -- focus. Do not tie the lime ownership outline to the transient threat state.
+    local taggedByPlayer = tapped and UnitIsTappedByPlayer(tagUnit) or nil
+    local taggedByOther = tapped and not taggedByPlayer or nil
+    plate.taggedByPlayer = taggedByPlayer
+    plate.taggedByOther = taggedByOther
+
     plate.glow:SetShown(target and cfg.targetglow)
 
     -- target indicator
-    if cfg.outcombatstate then
+    if taggedByPlayer then
+      -- Confirmed player-owned combat tag always wins over threat, reaction,
+      -- and target-highlight outline colours.
+      plate.health.backdrop:SetBackdropBorderColor(.35, 1, .05, .75)
+    elseif cfg.outcombatstate then
       local guid = plate.cachedGuid or ""
 
       -- determine color based on combat state
@@ -1567,6 +1301,8 @@ nameplates:RegisterEvent("ADDON_LOADED")
       plate.glow:SetPoint("CENTER", plate.health, "CENTER", 0, 0)
       plate.totem:Hide()
     end
+
+    if zNameplates.UpdateQuestIcon then zNameplates.UpdateQuestIcon(plate, name, player or TotemIcon) end
 
     -- Gate level SetText behind a (level, elite) cache. string.format
     -- here was firing every OnDataChanged tick per plate; with the cache
@@ -1663,10 +1399,6 @@ nameplates:RegisterEvent("ADDON_LOADED")
       r, g, b, a = PFUI_CLASS_COLORS[class]:GetRGBA()
     end
 
-    if unitstr and UnitIsTapped(unitstr) and not UnitIsTappedByPlayer(unitstr) then
-      r, g, b, a = .5, .5, .5, .8
-    end
-
     if cfg.barcombatstate then
       local guid = plate.cachedGuid or ""
       local color = GetCombatStateColor(guid, plate.unit)
@@ -1676,16 +1408,24 @@ nameplates:RegisterEvent("ADDON_LOADED")
       end
     end
 
-    if r ~= plate.cache.r or g ~= plate.cache.g or b ~= plate.cache.b then
+    if taggedByOther then
+      -- Preserve perceived brightness while removing hue. This runs after the
+      -- optional combat-state colour so another player's confirmed tap remains
+      -- desaturated regardless of the selected bar-colour mode.
+      local gray = r * .3 + g * .59 + b * .11
+      r, g, b = gray, gray, gray
+    end
+
+    if r ~= plate.cache.r or g ~= plate.cache.g or b ~= plate.cache.b or a ~= plate.cache.a then
       plate.health:SetStatusBarColor(r, g, b, a)
-      plate.cache.r, plate.cache.g, plate.cache.b = r, g, b
+      plate.cache.r, plate.cache.g, plate.cache.b, plate.cache.a = r, g, b, a
     end
 
     -- Resolve the name colour independently from the healthbar colour.
     local colorUnit = plate.unit or unitstr
     local nameR, nameG, nameB, nameA = GetStringColor(
       plate.isCritter and C.nameplates.critternamecolor or
-      (isFriendly and C.nameplates.friendlynamecolor or C.nameplates.enemynamecolor))
+      (plate.isFriendly and C.nameplates.friendlynamecolor or C.nameplates.enemynamecolor))
     if plate.isNeutral then
       nameR, nameG, nameB, nameA = unpack(unitcolors["NEUTRAL_NPC"])
     end
@@ -1705,10 +1445,15 @@ nameplates:RegisterEvent("ADDON_LOADED")
       (unittype == "FRIENDLY_PLAYER" and C.nameplates.friendclassnamec == "1")) then
       nameR, nameG, nameB, nameA = PFUI_CLASS_COLORS[class]:GetRGBA()
     end
+    if taggedByOther then
+      -- Only a positively confirmed tap owned by somebody else receives the
+      -- dark-gray name override. Untapped/unknown mobs keep their normal colour.
+      nameR, nameG, nameB, nameA = .3, .3, .3, 1
+    end
 
     local nameColorKey = tostring(unittype) .. ":" .. tostring(class or "") .. ":" ..
       tostring(reaction or "") .. ":" .. tostring(petHappiness or "") .. ":" ..
-      tostring(plate.isCritter) .. ":" .. tostring(C.nameplates.enemynamecolor) .. ":" .. tostring(C.nameplates.friendlynamecolor) .. ":" .. tostring(C.nameplates.critternamecolor) .. ":" ..
+      tostring(plate.isCritter) .. ":" .. tostring(taggedByOther) .. ":" .. tostring(C.nameplates.enemynamecolor) .. ":" .. tostring(C.nameplates.friendlynamecolor) .. ":" .. tostring(C.nameplates.critternamecolor) .. ":" ..
       tostring(C.nameplates.enemyclassc) .. ":" .. tostring(C.nameplates.friendclassnamec)
     if plate.cache.nameColorKey ~= nameColorKey then
       plate.cache.nameColorKey = nameColorKey
@@ -1989,13 +1734,15 @@ nameplates:RegisterEvent("ADDON_LOADED")
       update = true
     end
 
-    -- Combat highlighting is layered over the configured/dynamic base colour.
+    -- Another player's tap owns the dark-gray name state. Neutral names keep
+    -- reaction yellow; all other plates may still use the configured combat tint.
     local unit = nameplate.unit
     local inCombatWithPlayer = cfg.namefightcolor and unit and UnitExists(unit) and
       UnitAffectingCombat(unit) and UnitAffectingCombat("player") or nil
-    if nameplate.cache.inCombat ~= inCombatWithPlayer then
-      nameplate.cache.inCombat = inCombatWithPlayer
-      if inCombatWithPlayer then
+    local combatNameOverride = inCombatWithPlayer and not nameplate.taggedByOther and not nameplate.isNeutral or nil
+    if nameplate.cache.inCombat ~= combatNameOverride then
+      nameplate.cache.inCombat = combatNameOverride
+      if combatNameOverride then
         nameplate.name:SetTextColor(1, .4, .2, 1)
       elseif nameplate.cache.nameR then
         nameplate.name:SetTextColor(nameplate.cache.nameR, nameplate.cache.nameG,

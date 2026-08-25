@@ -1,7 +1,7 @@
 -- One self-contained settings window for the standalone nameplate module.
 
 local Z = zNameplates
-local PATH = "Interface\\AddOns\\zNameplates"
+local PATH = "Interface\\AddOns\\z_Nameplates"
 
 local alignments = {
   { "Left", "LEFT" }, { "Center", "CENTER" }, { "Right", "RIGHT" },
@@ -153,6 +153,9 @@ local pages = {
       { "input", "Raid icon X offset", {"nameplates","raidiconoffx"} },
       { "input", "Raid icon Y offset", {"nameplates","raidiconoffy"} },
       { "input", "Raid icon size", {"nameplates","raidiconsize"} },
+      { "check", "Show quest-giver icons", {"nameplates","questicons"} },
+      { "input", "Quest icon size", {"nameplates","questiconsize"} },
+      { "input", "Quest icon vertical offset", {"nameplates","questiconoffset"} },
       { "color", "Border color", {"appearance","border","color"} },
       { "color", "Border background", {"appearance","border","background"} },
       { "input", "Default border size", {"appearance","border","default"} },
@@ -181,19 +184,8 @@ local pages = {
     },
   },
   {
-    name = "MSBT & Advanced",
+    name = "Advanced",
     items = {
-      { "check", "Enable MSBT on nameplates", {"nameplates","msbt_enable"} },
-      { "input", "MSBT X offset", {"nameplates","msbt_x"} },
-      { "input", "MSBT Y offset", {"nameplates","msbt_y"} },
-      { "input", "MSBT scroll height", {"nameplates","msbt_height"} },
-      { "input", "Seconds before fade", {"nameplates","msbt_fade"} },
-      { "select", "MSBT text alignment", {"nameplates","msbt_align"}, alignments },
-      { "status", "MSBT status" },
-      { "action", "Open MSBT font, color and text settings", nil, "Open MSBT", function()
-          if MikSBT and MikSBT.CommandHandler then MikSBT.CommandHandler("")
-          else DEFAULT_CHAT_FRAME:AddMessage("zNameplates: MikScrollingBattleText is not loaded.") end
-        end },
       { "input", "Normal update rate (updates/sec)", {"throttle","nameplates"} },
       { "input", "Target update rate", {"throttle","nameplates_target"} },
       { "input", "Castbar update rate", {"throttle","nameplates_castbar"} },
@@ -236,7 +228,7 @@ title:SetPoint("TOP", frame, "TOP", 0, -18)
 title:SetText("zNameplates")
 local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 subtitle:SetPoint("TOP", title, "BOTTOM", 0, -5)
-subtitle:SetText("Standalone nameplates with embedded MSBT combat text")
+subtitle:SetText("Standalone nameplates and nameplate-only settings")
 subtitle:SetTextColor(0.75, 0.75, 0.75, 1)
 
 local divider = frame:CreateTexture(nil, "ARTWORK")
@@ -350,18 +342,6 @@ local function CreateWidget(parent, item, index)
     preview:SetJustifyH("CENTER")
     preview:SetText(text)
     widget.control = preview
-  elseif kind == "status" then
-    local status = Label(parent, text, x, y)
-    status:SetWidth(350)
-    widget.control = status
-  elseif kind == "action" then
-    widget.path = nil
-    Label(parent, text, x, y)
-    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    button:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + 350, y + 3)
-    button:SetWidth(105); button:SetHeight(23); button:SetText(tostring(item[4] or ""))
-    button:SetScript("OnClick", item[5])
-    widget.control = button
   end
   table.insert(widgets, widget)
 end
@@ -428,12 +408,6 @@ function frame:Refresh()
       local size = tonumber(useUnit and Z.config.global.font_unit_size or Z.config.global.font_size) or 12
       local style = Z.config.nameplates.name.fontstyle or ""
       widget.control:SetFont(font, math.max(12, size + 3), style)
-    elseif widget.kind == "status" then
-      if MikSBT and MikSBT.CurrentProfile then
-        widget.control:SetText("MSBT status: |cff55ff55loaded and connected|r")
-      else
-        widget.control:SetText("MSBT status: |cffff5555embedded runtime failed to initialize|r")
-      end
     end
   end
 end
